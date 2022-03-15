@@ -84,6 +84,7 @@ namespace ContainerSolutions.OperatorSDK
             return true;
         }
 
+        // Amazing typo
         public async Task SatrtAsync()
         {
             while(! await IsCRDAvailable())

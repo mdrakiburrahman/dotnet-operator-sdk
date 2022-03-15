@@ -13,6 +13,9 @@ using Microsoft.Rest;
 
 namespace mssql_db
 {
+    /// <summary>
+	/// Implements IOperationHandler<BaseCRD> Interface
+	/// </summary>
     public class MSSQLDBOperationHandler : IOperationHandler<MSSQLDB>
     {
         const string INSTANCE = "instance";
@@ -20,10 +23,17 @@ namespace mssql_db
         const string PASSWORD = "password";
         const string MASTER = "master";
 
+        // A dictionary that stores each of the matching CRDs status
         Dictionary<string, MSSQLDB> m_currentState = new Dictionary<string, MSSQLDB>();
 
         private static readonly Logger Log = LogManager.GetCurrentClassLogger();
 
+        /// <summary>
+        /// Gets Instance of the base type generated from registered factory
+        /// </summary>
+        /// <param name="k8s">Kubernetes Client</param>
+        /// <param name="db">Database name</param>
+        /// <returns>SQL Server connection object</returns>
         SqlConnection GetDBConnection(Kubernetes k8s, MSSQLDB db)
         {
             var configMap = GetConfigMap(k8s, db);
@@ -53,6 +63,7 @@ namespace mssql_db
             return new SqlConnection(builder.ConnectionString);
         }
 
+        // Reads the CRD referenced configmap from K8s client
         V1ConfigMap GetConfigMap(Kubernetes k8s, MSSQLDB db)
         {
             try
@@ -65,6 +76,7 @@ namespace mssql_db
             }
         }
 
+        // Reads the CRD referenced secret from K8s client
         V1Secret GetSecret(Kubernetes k8s, MSSQLDB db)
         {
             try
@@ -77,6 +89,7 @@ namespace mssql_db
             }
         }
 
+        // If a new CRD is added, add it to the current state dictionary
         public Task OnAdded(Kubernetes k8s, MSSQLDB crd)
         {
             lock (m_currentState)
@@ -85,6 +98,8 @@ namespace mssql_db
             return Task.CompletedTask;
         }
 
+        // Bookmark: https://kubernetes.io/docs/reference/using-api/api-concepts/#watch-bookmarks
+        //  It is a special kind of event to mark that all changes up to a given resourceVersion the client is requesting have already been sent.
         public Task OnBookmarked(Kubernetes k8s, MSSQLDB crd)
         {
             Log.Warn($"MSSQLDB {crd.Name()} was BOOKMARKED (???)");
@@ -92,6 +107,7 @@ namespace mssql_db
             return Task.CompletedTask;
         }
 
+        // If a CRD is deleted, remove it from the current state dictionary, and delete from SQL too
         public Task OnDeleted(Kubernetes k8s, MSSQLDB crd)
         {
             lock (m_currentState)
@@ -109,8 +125,9 @@ namespace mssql_db
                     }
                     catch (SqlException sex)
                     {
-                        if (sex.Number == 3701) //Already gone!
+                        if (sex.Number == 3701)
                         {
+                            // 0xe75	3701	SQL_3701_severity_11	Cannot %S_MSG the %S_MSG '%.*ls', because it does not exist or you do not have permission.
                             Log.Error(sex.Message);
                             return Task.CompletedTask;
                         }
@@ -140,16 +157,20 @@ namespace mssql_db
             return Task.CompletedTask;
         }
 
+        // Checks what was updated in the CRD
         public Task OnUpdated(Kubernetes k8s, MSSQLDB crd)
         {
             Log.Info($"MSSQLDB {crd.Name()} was updated. ({crd.Spec.DBName})");
 
+            // The specific CRD that was updated
             MSSQLDB currentDb = m_currentState[crd.Name()];
 
+            // Checks if name was changed
             if (currentDb.Spec.DBName != crd.Spec.DBName)
             {
                 try
                 {
+                    // Renames in SQL Server
                     RenameDB(k8s, currentDb, crd);
                     Log.Info($"Database sucessfully renamed from {currentDb.Spec.DBName} to {crd.Spec.DBName}");
                     m_currentState[crd.Name()] = crd;
@@ -161,31 +182,46 @@ namespace mssql_db
                 }
             }
             else
+                // Name wasn't updated - so either the configMap name or the Creds secret name was updated
                 m_currentState[crd.Name()] = crd;
 
             return Task.CompletedTask;
         }
 
+        /// <summary>
+        /// Checks Database state inside the SQL Server instance
+        /// If Database isn't there, it's going to try and create
+        ///
+        /// Note it does not come back to K8s and create something that isn't there - but that would be cool!
+        /// </summary>
         public Task CheckCurrentState(Kubernetes k8s)
         {
+            // Locks the dictionary of CRDs
             lock (m_currentState)
             {
+                // Loop over each of the CRD's we are tracking
                 foreach (string key in m_currentState.Keys.ToList())
                 {
+                    // Our Database, grab by name
                     MSSQLDB db = m_currentState[key];
                     using (SqlConnection connection = GetDBConnection(k8s, db))
                     {
+                        // Check if DB exists in SYS.DATABASES
                         connection.Open();
                         SqlCommand queryCommand = new SqlCommand($"SELECT COUNT(*) FROM SYS.DATABASES WHERE NAME = '{db.Spec.DBName}';", connection);
 
                         try
                         {
+                            // i to contain return flag of query execution
+                            // https://docs.microsoft.com/en-us/dotnet/api/system.data.sqlclient.sqlcommand.executescalar?view=dotnet-plat-ext-6.0
+                            // Returns null or 0 if no rows are returned
                             int i = (int)queryCommand.ExecuteScalar();
 
+                            // Database doesn't exist
                             if (i == 0)
                             {
                                 Log.Warn($"Database {db.Spec.DBName} ({db.Name()}) was not found!");
-                                CreateDB(k8s, db);
+                                CreateDB(k8s, db); // So create
                             }
                         }
                         catch (Exception ex)
@@ -196,9 +232,10 @@ namespace mssql_db
                 }
             }
 
-            return Task.CompletedTask;
+            return Task.CompletedTask; // Returns the completed Task: https://docs.microsoft.com/en-us/dotnet/api/system.threading.tasks.task.completedtask?view=net-6.0#system-threading-tasks-task-completedtask
         }
 
+        // Creates a new Database with the given CRD definition
         void CreateDB(Kubernetes k8s, MSSQLDB db)
         {
             Log.Info($"Database {db.Spec.DBName} must be created.");
@@ -212,23 +249,26 @@ namespace mssql_db
                     SqlCommand createCommand = new SqlCommand($"CREATE DATABASE {db.Spec.DBName};", connection);
                     int i = createCommand.ExecuteNonQuery();
                 }
-                catch (SqlException sex) when (sex.Number == 1801) //Database already exists
+                catch (SqlException sex) when (sex.Number == 1801) // SQL Exception Database already exists
                 {
+                    // http://errors/
+                    // 0x709	1801	SQL_1801_severity_16	Database '%.*ls' already exist
                     Log.Warn(sex.Message);
-                    m_currentState[db.Name()] = db;
+                    m_currentState[db.Name()] = db; // Update the dictionary to store the database object
                     return;
                 }
-                catch (Exception ex)
+                catch (Exception ex) // Something else other than Database existing went wrong
                 {
                     Log.Fatal(ex.Message);
                     throw;
                 }
 
-                m_currentState[db.Name()] = db;
+                m_currentState[db.Name()] = db; // Created new dataase, update the dictionary to store the database object
                 Log.Info($"Database {db.Spec.DBName} successfully created!");
             }
         }
 
+        // Renames a Database with CRD Spec
         void RenameDB(Kubernetes k8s, MSSQLDB currentDB, MSSQLDB newDB)
         {
             string sqlCommand = @$"ALTER DATABASE {currentDB.Spec.DBName} SET SINGLE_USER WITH ROLLBACK IMMEDIATE;

@@ -2,9 +2,20 @@
 
 ## Microsoft SQL Server Database operator
 
+### Relevant docs
+* Kubernetes API reference: https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.23/#objectmeta-v1-meta
+* `lock` for C#: https://docs.microsoft.com/en-us/dotnet/csharp/language-reference/statements/lock
+* `Task`-based Async pattern (TAP): https://docs.microsoft.com/en-us/dotnet/standard/asynchronous-programming-patterns/task-based-asynchronous-pattern-tap
+* `Task` for C#: https://docs.microsoft.com/en-us/dotnet/api/system.threading.tasks.task?view=net-6.0
+* Bookmark for K8s: https://kubernetes.io/docs/reference/using-api/api-concepts/#watch-bookmarks
+
+### Microk8s setup
+
 ### Definition
 
 This is a controller for a newly defined `CustomResourceDefinition` (CRD) that lets you create or delete (drop) databases from a Microsoft SQL Server `Pod` running in your Kubernetes cluster.
+
+> Compare this to the SQL MI CRD [here](https://github.com/microsoft/azure_arc/blob/1565c7ab9a141e1879585daa8b687324822a70ce/arc_data_services/deploy/yaml/custom-resource-definitions.yaml#L223).
 
 ```yaml
 apiVersion: apiextensions.k8s.io/v1
@@ -18,8 +29,10 @@ spec:
     plural: mssqldbs
     singular: mssqldb
     kind: MSSQLDB
+  # Basically versioning the CRDs
   versions:
     - name: v1
+	  # https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definition-versioning/#overview
       served: true
       storage: true
       schema:
@@ -27,6 +40,7 @@ spec:
           type: object
           description: "A Microsoft SQLServer Database"
           properties:
+		  	# The actual CRD Spec
             spec:
               type: object
               properties:
@@ -47,17 +61,17 @@ This `CRD` has three properties, `dbname`, `configmap`, and `credentials`. All t
 
 As you can see, these are mandatory for the controller to successfully communicate to the SQL Server instance.
 
-So, a typical yaml for my new resource, called `MSSQLDB`, will lool like this
+So, a typical yaml for my new resource, called `MSSQLDB`, will look like this
 
 ```yaml
-apiVersion: "samples.k8s-cs-controller/v1"
+apiVersion: samples.k8s-dotnet-controller-sdk/v1
 kind: MSSQLDB
 metadata:
   name: db1
 spec:
   dbname: MyFirstDB
   configmap: mssql-config
-  credentials: mssql-credentials 
+  credentials: mssql-credentials
 ```
 
 This yaml will create (or delete) an object of kind `MSSQLDB`, named db1 with the properties mentioned above. In this case, a `ConfigMap` called `mssql-config` and a `Secret` called `mssql-credentials` must exist.
@@ -75,8 +89,9 @@ But nothing actually happens other than the API-Server saving the data in the cl
 
 #### Base class
 
-We need to create a class that represents our definition. For that purpose, the SDK provides a class called **`BaseCRD`** which is where your class will inherit from. Also, you must create a spec class that will hold the properties defined in your custom resource. In my case, this is what they look like.
+We need to create a class that represents our definition. For that purpose, the SDK provides a class called **`BaseCRD`** which is where your class will inherit from. Also, you must create a spec class that will hold the properties defined in your custom resource. In my case, this is what they look like:
 
+`samples/mssql-db/MSSQLDB.cs`:
 ```cs
 public class MSSQLDB : BaseCRD
 {
@@ -101,6 +116,7 @@ Keep in mind the strings you must pass over the base class' constructor. These a
 
 Then you need to create the class that will be actually creating or deleting the databases. For this purpose, create a class that implements the **`IOperationHAndler<T>`**, where **`T`** is your implementation of the **`BaseCRD`**,  in my case **`MSSQLDB`**.
 
+`samples/mssql-db/MSSQLDBOperationHandler.cs`:
 ```cs
 public interface IOperationHandler<T> where T : BaseCRD
 {
@@ -117,7 +133,7 @@ public interface IOperationHandler<T> where T : BaseCRD
 	Task CheckCurrentState(Kubernetes k8s);
 }
 ```
-The implementation is pretty straight forward, you need to implement the **`OnAction`** methods. These methods are the ones that will communicate with the SQL Server instance and will create or delete the databases. So whenever somebody uses `kubectl` to create, apply or delete an object, these methods will be called.
+The implementation is pretty straight forward, you need to implement the **`On_Action_`** methods. These methods are the ones that will communicate with the SQL Server instance and will create or delete the databases. So whenever somebody uses `kubectl` to create, apply or delete an object, these methods will be called.
 
 But what happens if somebody or something connects to your SQL Server instance and deletes the databases? Here's where the **`CheckCurrentState`** method comes into play. This method, in my case, is checking every 5 seconds if the **`MSSQLDB`** objects created in my cluster are actually created as databases in the SQL Server instance. If they are not, it will try to recreate them.
 
