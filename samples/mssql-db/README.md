@@ -9,7 +9,92 @@
 * `Task` for C#: https://docs.microsoft.com/en-us/dotnet/api/system.threading.tasks.task?view=net-6.0
 * Bookmark for K8s: https://kubernetes.io/docs/reference/using-api/api-concepts/#watch-bookmarks
 
+---
+
 ### Microk8s setup
+
+Run these in local **PowerShell in _Admin mode_** to spin up via Multipass:
+
+> Run with Docker Desktop turned off so `microk8s-vm` has no trouble booting up
+
+**Multipass notes**
+* `Multipassd` is the main binary available here: C:\Program Files\Multipass\bin
+* Default VM files end up here: C:\Windows\System32\config\systemprofile\AppData\Roaming\multipassd
+
+
+```PowerShell
+# Delete old one (if any)
+multipass list
+multipass delete microk8s-vm
+multipass purge
+
+# Single node K8s cluster
+# Latest releases: https://microk8s.io/docs/release-notes
+microk8s install "--cpu=4" "--mem=6" "--disk=10" "--channel=1.22/stable" -y
+
+# Launched: microk8s-vm
+# 2022-03-05T23:05:51Z INFO Waiting for automatic snapd restart...
+# ...
+
+# Allow priveleged containers
+multipass shell microk8s-vm
+# This shells us in
+
+sudo bash -c 'echo "--allow-privileged" >> /var/snap/microk8s/current/args/kube-apiserver'
+
+exit # Exit out from Microk8s vm
+
+# Start microk8s
+microk8s status --wait-ready
+
+# Get IP address of node for MetalLB range
+microk8s kubectl get nodes -o wide
+# NAME          STATUS   ROLES    AGE   VERSION                    INTERNAL-IP      EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION       CONTAINER-RUNTIME
+# microk8s-vm   Ready    <none>   75s   v1.22.6-3+7ab10db7034594   172.17.27.114      <none>        Ubuntu 18.04.6 LTS   4.15.0-169-generic   containerd://1.5.2
+
+# Enable features needed for arc
+microk8s enable dns storage metallb ingress
+# Enter CIDR for MetalLB: 172.17.27.150-172.17.27.160
+# This must be in the same range as the VM above!
+
+# Access via kubectl in this container
+$DIR = "C:\Users\mdrrahman\Documents\GitHub\dotnet-operator-sdk\microk8s"
+microk8s config view > $DIR\config # Export kubeconfig
+```
+
+Turn on Docker Desktop.
+
+Now we go into our VSCode Container:
+
+```bash
+cd /workspaces/dotnet-operator-sdk
+rm -rf $HOME/.kube
+mkdir $HOME/.kube
+cp microk8s/config $HOME/.kube/config
+dos2unix $HOME/.kube/config
+cat $HOME/.kube/config
+
+# Check kubectl works
+kubectl get nodes
+# NAME          STATUS   ROLES    AGE   VERSION
+# microk8s-vm   Ready    <none>   29m   v1.22.6-3+7ab10db7034594
+```
+
+---
+
+### Pre Controller prep
+
+---
+
+### Run Controller locally
+
+
+---
+
+### Deploy Controller as a pod
+
+
+---
 
 ### Definition
 
@@ -203,11 +288,11 @@ Here's the log of the execution. The first thing I did was created the first db 
 
 `kubectl apply -f .\db1.yaml`
 
-I then deleted the object, and the database was successfully created:
+I then deleted the object, and the database was successfully deleted:
 
 `kubectl delete -f .\db1.yaml`
 
-I then created it again, and connected to the pod running the SQL Server and dropped the MyFirstDB database, thus, you see that `Database MyFirstDB was not found!` message.
+I then created it again via YAML, and connected to the pod running the SQL Server and dropped the MyFirstDB database, thus, you see that `Database MyFirstDB was not found!` message.
 
 Also, in the log shown above, you'll notice some messages seem to have the same info, but they actually come from two sources. One from the controller engine itself (from inside the SDK) and some form my own MSSQLDB implementation.
 

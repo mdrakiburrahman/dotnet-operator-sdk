@@ -6,3 +6,4 @@ obj/
 
 out/
 *.env
+microk8s/
