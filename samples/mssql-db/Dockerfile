@@ -8,7 +8,7 @@ RUN dotnet publish --configuration Release -o out/ ./mssql-db.csproj
 
 FROM mcr.microsoft.com/dotnet/runtime:5.0 as runtime
 
-LABEL maintainer="Sebastián Gómez<sebastian.gomez@container-solutions.com>"
+LABEL maintainer="Raki Rahman<mdrakiburrahman@gmail.com>"
 
 ARG BUILD
 ENV APPVERSION=$BUILD

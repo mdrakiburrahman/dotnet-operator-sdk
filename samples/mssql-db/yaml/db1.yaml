@@ -3,6 +3,6 @@ kind: MSSQLDB
 metadata:
   name: db1
 spec:
-  dbname: MyFirstDB
+  dbname: MyFirstDB_rename
   configmap: mssql-config
   credentials: mssql-credentials

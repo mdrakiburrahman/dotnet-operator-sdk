@@ -53,6 +53,7 @@ namespace ContainerSolutions.OperatorSDK
             }
             else
             {
+                // Loads from regular kubeconfig location - https://github.com/kubernetes-client/csharp
                 config = KubernetesClientConfiguration.BuildConfigFromConfigFile();
             }
 

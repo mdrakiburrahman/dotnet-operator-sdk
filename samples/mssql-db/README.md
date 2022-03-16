@@ -50,11 +50,11 @@ microk8s status --wait-ready
 # Get IP address of node for MetalLB range
 microk8s kubectl get nodes -o wide
 # NAME          STATUS   ROLES    AGE   VERSION                    INTERNAL-IP      EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION       CONTAINER-RUNTIME
-# microk8s-vm   Ready    <none>   75s   v1.22.6-3+7ab10db7034594   172.17.27.114      <none>        Ubuntu 18.04.6 LTS   4.15.0-169-generic   containerd://1.5.2
+# microk8s-vm   Ready    <none>   75s   v1.22.6-3+7ab10db7034594   172.27.56.19      <none>        Ubuntu 18.04.6 LTS   4.15.0-169-generic   containerd://1.5.2
 
 # Enable features needed for arc
 microk8s enable dns storage metallb ingress
-# Enter CIDR for MetalLB: 172.17.27.150-172.17.27.160
+# Enter CIDR for MetalLB: 172.27.56.40-172.27.56.50
 # This must be in the same range as the VM above!
 
 # Access via kubectl in this container
@@ -82,21 +82,96 @@ kubectl get nodes
 
 ---
 
-### Pre Controller prep
+### Pre-Controller prep
+
+```bash
+# Create CRD
+kubectl apply -f /workspaces/dotnet-operator-sdk/samples/mssql-db/yaml/mssql-crd.yaml
+# customresourcedefinition.apiextensions.k8s.io/mssqldbs.samples.k8s-dotnet-controller-sdk created
+
+# Create SQL Pod
+kubectl apply -f /workspaces/dotnet-operator-sdk/samples/mssql-db/yaml/deployment.yaml
+
+# Make sure we can connect from this container
+sqlcmd -S 172.27.56.40,1433 -U sa -P acntorPRESTO! -Q "SELECT name FROM sys.databases"
+# results
+```
 
 ---
 
 ### Run Controller locally
 
+```bash
+cd /workspaces/dotnet-operator-sdk/samples/mssql-db
 
+dotnet build
+# Build succeeded.
+#     0 Warning(s)
+#     0 Error(s)
+# Time Elapsed 00:00:13.05
+
+dotnet run
+# 2022-03-16 01:03:30.0737 [INFO] mssql_db.MSSQLController:=== MSSQLController STARTING for namespace default ===
+# 2022-03-16 01:03:30.2362 [INFO] mssql_db.MSSQLController:=== MSSQLController STARTED ===
+# 2022-03-16 01:03:30.3576 [INFO] ContainerSolutions.OperatorSDK.Controller`1:Reconciliation Loop for CRD mssqldb will run every 5 seconds.
+
+# Test DB CRD:
+kubectl apply -f /workspaces/dotnet-operator-sdk/samples/mssql-db/yaml/db1.yaml
+# 2022-03-16 01:34:00.1830 [INFO] ContainerSolutions.OperatorSDK.Controller`1:mssql_db.MSSQLDB db1 Added on Namespace default
+# 2022-03-16 01:34:00.1830 [INFO] mssql_db.MSSQLDBOperationHandler:Database MyFirstDB must be created.
+# 2022-03-16 01:34:00.7339 [INFO] mssql_db.MSSQLDBOperationHandler:Database MyFirstDB successfully created!
+
+# SSMS: we see MyFirstDB
+
+# Edit CRD DB name:
+
+# 2022-03-16 01:36:47.3682 [INFO] ContainerSolutions.OperatorSDK.Controller`1:mssql_db.MSSQLDB db1 Modified on Namespace default
+# 2022-03-16 01:36:47.3682 [INFO] mssql_db.MSSQLDBOperationHandler:MSSQLDB db1 was updated. (MyFirstDB_rename)
+# 2022-03-16 01:36:47.4618 [INFO] mssql_db.MSSQLDBOperationHandler:Database sucessfully renamed from MyFirstDB to MyFirstDB_rename
+
+# SSMS: we see MyFirstDB_rename
+
+# Delete in SQL
+sqlcmd -S 172.27.56.40,1433 -U sa -P acntorPRESTO! -Q " DROP DATABASE MyFirstDB_rename"
+
+# 2022-03-16 01:41:58.5164 [WARN] mssql_db.MSSQLDBOperationHandler:Database MyFirstDB_rename (db1) was not found!
+# 2022-03-16 01:41:58.5164 [INFO] mssql_db.MSSQLDBOperationHandler:Database MyFirstDB_rename must be created.
+# 2022-03-16 01:41:58.9141 [INFO] mssql_db.MSSQLDBOperationHandler:Database MyFirstDB_rename successfully created!
+
+# Delete DB CRD
+kubectl delete -f /workspaces/dotnet-operator-sdk/samples/mssql-db/yaml/db1.yaml
+# 2022-03-16 01:43:11.9665 [INFO] ContainerSolutions.OperatorSDK.Controller`1:mssql_db.MSSQLDB db1 Deleted on Namespace default
+# 2022-03-16 01:43:11.9665 [INFO] mssql_db.MSSQLDBOperationHandler:MSSQLDB db1 must be deleted! (MyFirstDB_rename)
+# 2022-03-16 01:43:11.9916 [INFO] mssql_db.MSSQLDBOperationHandler:Database MyFirstDB_rename successfully dropped!
+
+# SSMS: DB is gone!
+
+```
 ---
 
 ### Deploy Controller as a pod
 
+```bash
+# Login to docker with access token
+docker login --username=mdrrakiburrahman --password=$DOCKERHUB_TOKEN
+
+cd /workspaces/dotnet-operator-sdk/samples/mssql-db
+
+# Build & push
+docker build -t mdrrakiburrahman/mssqldb-controller .
+docker push mdrrakiburrahman/mssqldb-controller
+
+# Deploy to k8s and tail
+kubectl apply -f /workspaces/dotnet-operator-sdk/samples/mssql-db/yaml/controller-deployment.yaml
+
+kubectl logs mssqldb-controller-6b7c85fb4-shd2j --follow
+# And the same tests above.
+
+```
 
 ---
 
-### Definition
+## Definition
 
 This is a controller for a newly defined `CustomResourceDefinition` (CRD) that lets you create or delete (drop) databases from a Microsoft SQL Server `Pod` running in your Kubernetes cluster.
 

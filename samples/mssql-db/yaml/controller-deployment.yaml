@@ -15,6 +15,6 @@ spec:
         app: mssqldb-controller
     spec:
       containers:
-      - image: sebagomez/k8s-mssqldb
+      - image: mdrrakiburrahman/mssqldb-controller
         imagePullPolicy: Always
         name: mssqldb-controller
